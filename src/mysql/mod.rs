@@ -83,7 +83,7 @@ impl AsyncConnection for AsyncMysqlConnection {
         let db_statement = debug_query::<Self::Backend, _>(&query).to_string();
         let db_name: String = self.conn.opts().db_name().unwrap_or("n/a").to_owned();
 
-        let future=self.with_prepared_statement(source.as_query(), |conn, stmt, binds| async move {
+        let future=self.with_prepared_statement(query, |conn, stmt, binds| async move {
             let span = Span::current();
             span.record("db.instance.id", conn.id());
             //span.record("db.name", db_name);
@@ -144,7 +144,7 @@ impl AsyncConnection for AsyncMysqlConnection {
                 otel.kind = "client",
             );
             span.in_scope(|| async move { future.await }).await
-        }.boxed();
+        }.boxed()
     }
 
     fn execute_returning_count<'conn, 'query, T>(
