@@ -235,6 +235,20 @@ pub trait AsyncConnection: SimpleAsyncConnection + Sized + Send {
         E: From<diesel::result::Error> + Send + 'a,
         R: Send + 'a,
     {
+        use tracing::*;
+
+        let span = tracing::span!(
+            target: module_path!(),
+            Level::INFO,
+            "transaction",
+            db.system="mysql",
+            db.name = tracing::field::Empty,
+            //db.name=tracing::field::Empty,
+            //otel.name = %format!("HTTP {} {}", req.method(), remote_addr),
+            otel.kind = "client",
+            otel.status_code= tracing::field::Empty
+        );
+
         Self::TransactionManager::transaction(self, callback).await
     }
 

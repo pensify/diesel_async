@@ -76,7 +76,18 @@ impl AsyncConnection for AsyncMysqlConnection {
             + diesel::query_builder::QueryId
             + 'query,
     {
-        self.with_prepared_statement(source.as_query(), |conn, stmt, binds| async move {
+        use diesel::debug_query;
+        use tracing::*;
+
+        let query = source.as_query();
+        let db_statement = debug_query::<Self::Backend, _>(&query).to_string();
+        let db_name: String = self.conn.opts().db_name().unwrap_or("n/a").to_owned();
+
+        let future=self.with_prepared_statement(source.as_query(), |conn, stmt, binds| async move {
+            let span = Span::current();
+            span.record("db.instance.id", conn.id());
+            //span.record("db.name", db_name);
+
             let stmt_for_exec = match stmt {
                 MaybeCached::Cached(ref s) => (*s).clone(),
                 MaybeCached::CannotCache(ref s) => s.clone(),
@@ -117,7 +128,23 @@ impl AsyncConnection for AsyncMysqlConnection {
 
             Ok(stream)
         })
-        .boxed()
+        .boxed();
+
+        async move {
+            let span = tracing::span!(
+                target: module_path!(),
+                Level::INFO,
+                "load",
+                db.instance.id = tracing::field::Empty,
+                db.system="mysql",
+                db.name=db_name,
+                db.statement=db_statement,
+
+                //otel.name = %format!("HTTP {} {}", req.method(), remote_addr),
+                otel.kind = "client",
+            );
+            span.in_scope(|| async move { future.await }).await
+        }.boxed();
     }
 
     fn execute_returning_count<'conn, 'query, T>(

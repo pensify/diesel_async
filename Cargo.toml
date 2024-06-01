@@ -13,6 +13,7 @@ description = "An async extension for Diesel the safe, extensible ORM and Query 
 rust-version = "1.78.0"
 
 [dependencies]
+tracing = { version = "0.1.40", optional=false}
 diesel = { version = "~2.1.1", default-features = false, features = [
         "i-implement-a-third-party-backend-and-opt-into-breaking-changes",
 ] }
