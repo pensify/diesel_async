@@ -249,7 +249,7 @@ pub trait AsyncConnection: SimpleAsyncConnection + Sized + Send {
             otel.status_code= tracing::field::Empty
         );
 
-        Self::TransactionManager::transaction(self, callback).await
+        Self::TransactionManager::transaction(self, callback).instrument(span).await
     }
 
     /// Creates a transaction that will never be committed. This is useful for
