@@ -8,6 +8,7 @@
 use crate::{AsyncConnection, SimpleAsyncConnection};
 use crate::{TransactionManager, UpdateAndFetchResults};
 use diesel::associations::HasTable;
+use diesel::connection::Instrumentation;
 use diesel::QueryResult;
 use futures_util::{future, FutureExt};
 use std::borrow::Cow;
@@ -118,6 +119,7 @@ where
 /// * [deadpool](self::deadpool)
 /// * [bb8](self::bb8)
 /// * [mobc](self::mobc)
+#[allow(dead_code)]
 pub struct AsyncDieselConnectionManager<C> {
     connection_url: String,
     manager_config: ManagerConfig<C>,
@@ -231,6 +233,14 @@ where
     async fn begin_test_transaction(&mut self) -> diesel::QueryResult<()> {
         self.deref_mut().begin_test_transaction().await
     }
+
+    fn instrumentation(&mut self) -> &mut dyn Instrumentation {
+        self.deref_mut().instrumentation()
+    }
+
+    fn set_instrumentation(&mut self, instrumentation: impl Instrumentation) {
+        self.deref_mut().set_instrumentation(instrumentation);
+    }
 }
 
 #[doc(hidden)]
@@ -316,7 +326,7 @@ pub trait PoolableConnection: AsyncConnection {
     async fn ping(&mut self, config: &RecyclingMethod<Self>) -> diesel::QueryResult<()>
     where
         for<'a> Self: 'a,
-        diesel::dsl::BareSelect<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>:
+        diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>:
             crate::methods::ExecuteDsl<Self>,
         diesel::query_builder::SqlQuery: crate::methods::ExecuteDsl<Self>,
     {

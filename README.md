@@ -1,4 +1,4 @@
-# A async interface for diesel
+# An async interface for diesel
 
 Diesel gets rid of the boilerplate for database interaction and eliminates
 runtime errors without sacrificing performance. It takes full advantage of
@@ -167,6 +167,11 @@ let mut conn = pool.get().await?;
 // use the connection as ordinary diesel-async connection
 let res = users::table.select(User::as_select()).load::(&mut conn).await?;
 ```
+
+## Diesel-Async with Secure Database
+
+In the event of using this crate with a `sslmode=require` flag, it will be necessary to build a TLS cert.
+There is an example provided for doing this using the `rustls` crate in the `postgres` examples folder.
 
 ## Crate Feature Flags
 

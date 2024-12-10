@@ -43,7 +43,7 @@ pub trait BlockOn {
 ///
 /// # Examples
 ///
-/// ```rust
+/// ```rust,no_run
 /// # include!("doctest_setup.rs");
 /// use schema::users;
 /// use diesel_async::async_connection_wrapper::AsyncConnectionWrapper;
@@ -61,7 +61,7 @@ pub trait BlockOn {
 ///
 /// If you are in the scope of an existing tokio runtime you need to use
 /// `tokio::task::spawn_blocking` to encapsulate the blocking tasks
-/// ```rust
+/// ```rust,no_run
 /// # include!("doctest_setup.rs");
 /// use schema::users;
 /// use diesel_async::async_connection_wrapper::AsyncConnectionWrapper;
@@ -101,13 +101,13 @@ pub use self::implementation::AsyncConnectionWrapper;
 
 mod implementation {
     use diesel::connection::{Instrumentation, SimpleConnection};
+    use std::ops::{Deref, DerefMut};
 
     use super::*;
 
     pub struct AsyncConnectionWrapper<C, B> {
         inner: C,
         runtime: B,
-        instrumentation: Option<Box<dyn Instrumentation>>,
     }
 
     impl<C, B> From<C> for AsyncConnectionWrapper<C, B>
@@ -119,8 +119,21 @@ mod implementation {
             Self {
                 inner,
                 runtime: B::get_runtime(),
-                instrumentation: None,
             }
+        }
+    }
+
+    impl<C, B> Deref for AsyncConnectionWrapper<C, B> {
+        type Target = C;
+
+        fn deref(&self) -> &Self::Target {
+            &self.inner
+        }
+    }
+
+    impl<C, B> DerefMut for AsyncConnectionWrapper<C, B> {
+        fn deref_mut(&mut self) -> &mut Self::Target {
+            &mut self.inner
         }
     }
 
@@ -150,11 +163,7 @@ mod implementation {
             let runtime = B::get_runtime();
             let f = C::establish(database_url);
             let inner = runtime.block_on(f)?;
-            Ok(Self {
-                inner,
-                runtime,
-                instrumentation: None,
-            })
+            Ok(Self { inner, runtime })
         }
 
         fn execute_returning_count<T>(&mut self, source: &T) -> diesel::QueryResult<usize>
@@ -165,18 +174,18 @@ mod implementation {
             self.runtime.block_on(f)
         }
 
-    fn transaction_state(
-        &mut self,
+        fn transaction_state(
+            &mut self,
         ) -> &mut <Self::TransactionManager as diesel::connection::TransactionManager<Self>>::TransactionStateData{
             self.inner.transaction_state()
         }
 
         fn instrumentation(&mut self) -> &mut dyn Instrumentation {
-            &mut self.instrumentation
+            self.inner.instrumentation()
         }
 
         fn set_instrumentation(&mut self, instrumentation: impl Instrumentation) {
-            self.instrumentation = Some(Box::new(instrumentation));
+            self.inner.set_instrumentation(instrumentation);
         }
     }
 
@@ -289,7 +298,7 @@ mod implementation {
         C: crate::AsyncConnection<Backend = <Self as diesel::Connection>::Backend>
             + crate::pooled_connection::PoolableConnection
             + 'static,
-        diesel::dsl::BareSelect<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>:
+        diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>:
             crate::methods::ExecuteDsl<C>,
         diesel::query_builder::SqlQuery: crate::methods::ExecuteDsl<C>,
     {

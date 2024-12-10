@@ -9,6 +9,7 @@
 
 use crate::{AsyncConnection, SimpleAsyncConnection, TransactionManager};
 use diesel::backend::{Backend, DieselReserveSpecialization};
+use diesel::connection::Instrumentation;
 use diesel::connection::{
     Connection, LoadConnection, TransactionManagerStatus, WithMetadataLookup,
 };
@@ -23,6 +24,9 @@ use futures_util::{FutureExt, StreamExt, TryFutureExt};
 use std::marker::PhantomData;
 use std::sync::{Arc, Mutex};
 use tokio::task::JoinError;
+
+#[cfg(feature = "sqlite")]
+mod sqlite;
 
 fn from_tokio_join_error(join_error: JoinError) -> diesel::result::Error {
     diesel::result::Error::DatabaseError(
@@ -47,7 +51,7 @@ fn from_tokio_join_error(join_error: JoinError) -> diesel::result::Error {
 /// # Examples
 ///
 /// ```rust
-/// # include!("doctest_setup.rs");
+/// # include!("../doctest_setup.rs");
 /// use diesel_async::RunQueryDsl;
 /// use schema::users;
 ///
@@ -128,10 +132,17 @@ where
             let mut cache = <<<C as LoadConnection>::Row<'_, '_> as IntoOwnedRow<
                 <C as Connection>::Backend,
             >>::Cache as Default>::default();
-            conn.load(&query).map(|c| {
-                c.map(|row| row.map(|r| IntoOwnedRow::into_owned(r, &mut cache)))
-                    .collect::<Vec<QueryResult<O>>>()
-            })
+            let cursor = conn.load(&query)?;
+
+            let size_hint = cursor.size_hint();
+            let mut out = Vec::with_capacity(size_hint.1.unwrap_or(size_hint.0));
+            // we use an explicit loop here to easily propagate possible errors
+            // as early as possible
+            for row in cursor {
+                out.push(Ok(IntoOwnedRow::into_owned(row?, &mut cache)));
+            }
+
+            Ok(out)
         })
         .map_ok(|rows| futures_util::stream::iter(rows).boxed())
         .boxed()
@@ -148,6 +159,34 @@ where
         &mut self,
     ) -> &mut <Self::TransactionManager as TransactionManager<Self>>::TransactionStateData {
         self.exclusive_connection().transaction_state()
+    }
+
+    fn instrumentation(&mut self) -> &mut dyn Instrumentation {
+        // there should be no other pending future when this is called
+        // that means there is only one instance of this arc and
+        // we can simply access the inner data
+        if let Some(inner) = Arc::get_mut(&mut self.inner) {
+            inner
+                .get_mut()
+                .unwrap_or_else(|p| p.into_inner())
+                .instrumentation()
+        } else {
+            panic!("Cannot access shared instrumentation")
+        }
+    }
+
+    fn set_instrumentation(&mut self, instrumentation: impl Instrumentation) {
+        // there should be no other pending future when this is called
+        // that means there is only one instance of this arc and
+        // we can simply access the inner data
+        if let Some(inner) = Arc::get_mut(&mut self.inner) {
+            inner
+                .get_mut()
+                .unwrap_or_else(|p| p.into_inner())
+                .set_instrumentation(instrumentation)
+        } else {
+            panic!("Cannot access shared instrumentation")
+        }
     }
 }
 
@@ -196,7 +235,33 @@ impl<C> SyncConnectionWrapper<C> {
         }
     }
 
-    pub(self) fn spawn_blocking<'a, R>(
+    /// Run a operation directly with the inner connection
+    ///
+    /// This function is usful to register custom functions
+    /// and collection for Sqlite for example
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// # include!("../doctest_setup.rs");
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// #     run_test().await.unwrap();
+    /// # }
+    /// #
+    /// # async fn run_test() -> QueryResult<()> {
+    /// #     let mut conn = establish_connection().await;
+    /// conn.spawn_blocking(|conn| {
+    ///    // sqlite.rs sqlite NOCASE only works for ASCII characters,
+    ///    // this collation allows handling UTF-8 (barring locale differences)
+    ///    conn.register_collation("RUSTNOCASE", |rhs, lhs| {
+    ///     rhs.to_lowercase().cmp(&lhs.to_lowercase())
+    ///   })
+    /// }).await
+    ///
+    /// # }
+    /// ```
+    pub fn spawn_blocking<'a, R>(
         &mut self,
         task: impl FnOnce(&mut C) -> QueryResult<R> + Send + 'static,
     ) -> BoxFuture<'a, QueryResult<R>>
@@ -206,9 +271,11 @@ impl<C> SyncConnectionWrapper<C> {
     {
         let inner = self.inner.clone();
         tokio::task::spawn_blocking(move || {
-            let mut inner = inner
-                .lock()
-                .expect("Mutex is poisoned, a thread must have panicked holding it.");
+            let mut inner = inner.lock().unwrap_or_else(|poison| {
+                // try to be resilient by providing the guard
+                inner.clear_poison();
+                poison.into_inner()
+            });
             task(&mut inner)
         })
         .unwrap_or_else(|err| QueryResult::Err(from_tokio_join_error(err)))
@@ -239,9 +306,11 @@ impl<C> SyncConnectionWrapper<C> {
 
         let (collect_bind_result, collector_data) = {
             let exclusive = self.inner.clone();
-            let mut inner = exclusive
-                .lock()
-                .expect("Mutex is poisoned, a thread must have panicked holding it.");
+            let mut inner = exclusive.lock().unwrap_or_else(|poison| {
+                // try to be resilient by providing the guard
+                exclusive.clear_poison();
+                poison.into_inner()
+            });
             let mut bind_collector =
                 <<C::Backend as Backend>::BindCollector<'_> as Default>::default();
             let metadata_lookup = inner.metadata_lookup();

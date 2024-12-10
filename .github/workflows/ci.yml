@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - main
+      - 0.3.x
+      - 0.4.x
       - 0.2.x
 
 name: CI Tests
@@ -22,7 +24,7 @@ jobs:
       matrix:
         rust: ["stable", "beta", "nightly"]
         backend: ["postgres", "mysql", "sqlite"]
-        os: [ubuntu-latest, macos-13, macos-14, windows-2019]
+        os: [ubuntu-latest, macos-13, macos-15, windows-2019]
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout sources
@@ -41,9 +43,19 @@ jobs:
 
       - name: Set environment variables
         shell: bash
-        if: matrix.rust == 'nightly'
+        if: matrix.backend == 'postgres' && matrix.os == 'windows-2019'
         run: |
-          echo "RUSTFLAGS=--cap-lints=warn" >> $GITHUB_ENV
+          echo "AWS_LC_SYS_NO_ASM=1"
+
+      - name: Set environment variables
+        shell: bash
+        if: matrix.rust != 'nightly'
+        run: |
+          echo "RUSTFLAGS=-D warnings" >> $GITHUB_ENV
+          echo "RUSTDOCFLAGS=-D warnings" >> $GITHUB_ENV
+
+      - uses: ilammy/setup-nasm@v1
+        if: matrix.backend == 'postgres' && matrix.os == 'windows-2019'
 
       - name: Install postgres (Linux)
         if: runner.os == 'Linux' && matrix.backend == 'postgres'
@@ -109,7 +121,7 @@ jobs:
           echo "DATABASE_URL=postgres://postgres@localhost/" >> $GITHUB_ENV
 
       - name: Install postgres (MacOS M1)
-        if: matrix.os == 'macos-14' && matrix.backend == 'postgres'
+        if: matrix.os == 'macos-15' && matrix.backend == 'postgres'
         run: |
           brew install postgresql@14
           brew services start postgresql@14
@@ -126,24 +138,24 @@ jobs:
       - name: Install mysql (MacOS)
         if: matrix.os == 'macos-13' && matrix.backend == 'mysql'
         run: |
-          brew install mariadb@11.3
-          /usr/local/opt/mariadb@11.3/bin/mysql_install_db
-          /usr/local/opt/mariadb@11.3/bin/mysql.server start
+          brew install mariadb@11.4
+          /usr/local/opt/mariadb@11.4/bin/mysql_install_db
+          /usr/local/opt/mariadb@11.4/bin/mysql.server start
           sleep 3
-          /usr/local/opt/mariadb@11.3/bin/mysqladmin -u runner password diesel
-          /usr/local/opt/mariadb@11.3/bin/mysql -e "create database diesel_test; create database diesel_unit_test; grant all on \`diesel_%\`.* to 'runner'@'localhost';" -urunner
+          /usr/local/opt/mariadb@11.4/bin/mysqladmin -u runner password diesel
+          /usr/local/opt/mariadb@11.4/bin/mysql -e "create database diesel_test; create database diesel_unit_test; grant all on \`diesel_%\`.* to 'runner'@'localhost';" -urunner
           echo "DATABASE_URL=mysql://runner:diesel@localhost/diesel_test" >> $GITHUB_ENV
 
       - name: Install mysql (MacOS M1)
-        if: matrix.os == 'macos-14' && matrix.backend == 'mysql'
+        if: matrix.os == 'macos-15' && matrix.backend == 'mysql'
         run: |
-          brew install mariadb@11.3
-          ls /opt/homebrew/opt/mariadb@11.3
-          /opt/homebrew/opt/mariadb@11.3/bin/mysql_install_db
-          /opt/homebrew/opt/mariadb@11.3/bin/mysql.server start
+          brew install mariadb@11.4
+          ls /opt/homebrew/opt/mariadb@11.4
+          /opt/homebrew/opt/mariadb@11.4/bin/mysql_install_db
+          /opt/homebrew/opt/mariadb@11.4/bin/mysql.server start
           sleep 3
-          /opt/homebrew/opt/mariadb@11.3/bin/mysqladmin -u runner password diesel
-          /opt/homebrew/opt/mariadb@11.3/bin/mysql -e "create database diesel_test; create database diesel_unit_test; grant all on \`diesel_%\`.* to 'runner'@'localhost';" -urunner
+          /opt/homebrew/opt/mariadb@11.4/bin/mysqladmin -u runner password diesel
+          /opt/homebrew/opt/mariadb@11.4/bin/mysql -e "create database diesel_test; create database diesel_unit_test; grant all on \`diesel_%\`.* to 'runner'@'localhost';" -urunner
           echo "DATABASE_URL=mysql://runner:diesel@localhost/diesel_test" >> $GITHUB_ENV
 
       - name: Install postgres (Windows)
@@ -190,7 +202,7 @@ jobs:
         run: cargo +${{ matrix.rust }} version
 
       - name: Test diesel_async
-        run: cargo +${{ matrix.rust }} test --manifest-path Cargo.toml --no-default-features --features "${{ matrix.backend }} deadpool bb8 mobc"
+        run: cargo +${{ matrix.rust }} test --manifest-path Cargo.toml --no-default-features --features "${{ matrix.backend }} deadpool bb8 mobc async-connection-wrapper"
 
       - name: Run examples (Postgres)
         if: matrix.backend == 'postgres'
@@ -223,7 +235,7 @@ jobs:
           find ~/.cargo/registry -iname "*clippy.toml" -delete
 
       - name: Run clippy
-        run: cargo +stable clippy --all
+        run: cargo +stable clippy --all --all-features
 
       - name: Check formating
         run: cargo +stable fmt --all -- --check
